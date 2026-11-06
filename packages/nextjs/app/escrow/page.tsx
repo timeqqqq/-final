@@ -5,12 +5,7 @@ import type { NextPage } from "next";
 import { Address as AddressType, formatUnits, isAddress, parseUnits } from "viem";
 import { useAccount } from "wagmi";
 import { Address } from "~~/components/scaffold-eth";
-import {
-  useDeployedContractInfo,
-  useScaffoldEventHistory,
-  useScaffoldReadContract,
-  useScaffoldWriteContract,
-} from "~~/hooks/scaffold-eth";
+import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 
 const STATUS = ["Created", "Paid", "Completed", "Refunded", "Disputed"] as const;
 type Order = {
@@ -43,32 +38,20 @@ const EscrowPage: NextPage = () => {
     args: [address],
   });
   const {
-    data: events,
+    data: orderCount,
     isLoading,
     error,
-  } = useScaffoldEventHistory({
-    contractName: "Escrow",
-    eventName: "OrderCreated",
-    watch: true,
-    blocksBatchSize: 10,
-  });
+    refetch: refetchOrderCount,
+  } = useScaffoldReadContract({ contractName: "Escrow", functionName: "orderCount" });
   const { writeContractAsync: writeEscrow } = useScaffoldWriteContract({ contractName: "Escrow" });
   const { writeContractAsync: writeToken } = useScaffoldWriteContract({ contractName: "jsbToken" });
 
-  const ids = useMemo(() => {
-    const values = new Set<bigint>();
-    events?.forEach(event => event.args.id !== undefined && values.add(event.args.id));
-    return [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  }, [events]);
-
-  const role = useMemo(() => {
-    if (!address) return "未连接钱包";
-    if (sameAddress(address, arbiter)) return "仲裁人";
-    const buyer = events?.some(event => sameAddress(address, event.args.buyer));
-    const sellerRole = events?.some(event => sameAddress(address, event.args.seller));
-    if (buyer && sellerRole) return "买家 / 卖家";
-    return buyer ? "买家" : sellerRole ? "卖家" : "旁观者";
-  }, [address, arbiter, events]);
+  // IDs are consecutive from zero; read storage without scanning historical logs.
+  const ids = useMemo(
+    () => Array.from({ length: Number(orderCount ?? 0n) }, (_, index) => BigInt(index)),
+    [orderCount],
+  );
+  const role = !address ? "未连接钱包" : sameAddress(address, arbiter) ? "仲裁人" : "已连接（角色见订单）";
 
   const createOrder = async (event: FormEvent) => {
     event.preventDefault();
@@ -95,7 +78,8 @@ const EscrowPage: NextPage = () => {
       });
       if (hash) {
         setDescription("");
-        setMessage("订单创建成功，正在等待事件列表刷新。");
+        void refetchOrderCount();
+        setMessage("订单创建成功，正在读取链上订单。");
       }
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "创建订单失败");
@@ -220,7 +204,7 @@ const EscrowPage: NextPage = () => {
         <div className="mb-4 flex items-end justify-between">
           <div>
             <h2 className="m-0 text-2xl font-bold">订单列表</h2>
-            <p className="mb-0 mt-1 text-sm text-base-content/60">数据来自 OrderCreated 事件和链上订单状态。</p>
+            <p className="mb-0 mt-1 text-sm text-base-content/60">数据直接读取链上订单总数和订单状态。</p>
           </div>
           <span className="badge badge-lg">{ids.length} 笔</span>
         </div>
@@ -229,7 +213,7 @@ const EscrowPage: NextPage = () => {
             <span className="loading loading-spinner loading-lg" />
           </div>
         ) : error ? (
-          <div className="alert alert-error">事件读取失败：{error.message}</div>
+          <div className="alert alert-error">链上订单读取失败：{error.message}</div>
         ) : ids.length === 0 ? (
           <div className="rounded-3xl bg-base-200 p-10 text-center text-base-content/60">暂无订单</div>
         ) : (
