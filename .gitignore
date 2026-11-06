@@ -21,4 +21,3 @@ node_modules
 
 # cli
 dist
-packages/nextjs/app/escrow/page.tsx
